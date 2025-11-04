@@ -1,4 +1,4 @@
-import type { EventEmitter, SendTransactionOptions, WalletName, TransactionOrVersionedTransaction } from '@gorbag/wallet-adapter-base';
+import type { EventEmitter, SendTransactionOptions, WalletName, TransactionOrVersionedTransaction } from '../base/src';
 import {
     BaseMessageSignerWalletAdapter,
     isIosAndRedirectable,
@@ -17,7 +17,7 @@ import {
     WalletSignMessageError,
     WalletSignTransactionError,
     type TransactionVersion,
-} from '@gorbag/wallet-adapter-base';
+} from '../base/src';
 import type {
     Connection,
     SendOptions,
