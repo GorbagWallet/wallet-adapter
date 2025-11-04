@@ -1,10 +1,10 @@
 {
     "name": "@gorbag/wallet-adapter",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "author": "David Nzube (Skipp)",
     "repository": {
         "type": "git",
-        "url": "https://github.com/GorbagWallet/wallet-adapter"
+        "url": "git+https://github.com/GorbagWallet/wallet-adapter.git"
     },
     "license": "GPL-3.0",
     "publishConfig": {
