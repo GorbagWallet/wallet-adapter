@@ -4,7 +4,7 @@
     "author": "David Nzube (Skipp)",
     "repository": {
         "type": "git",
-        "url": "https://github.com/DavidNzube101/gorbag-wallet"
+        "url": "https://github.com/GorbagWallet/wallet-adapter"
     },
     "license": "GPL-3.0",
     "publishConfig": {
