@@ -1,5 +1,9 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function addJsExtensionsToEsmImports(directory) {
   const esmDir = path.join(directory, 'lib', 'esm');
@@ -20,6 +24,11 @@ function addJsExtensionsToEsmImports(directory) {
       // Replace local imports that don't already have .js extension
       .replace(/(from\s+["'])\.\/([^"']*?)(\.js)?(["'])/g, '$1./$2.js$4')
       .replace(/(from\s+["'])\.\.\/([^"']*?)(\.js)?(["'])/g, '$1../$2.js$4');
+    
+    // Also handle import statements in addition to from clauses
+    updatedContent = updatedContent
+      .replace(/(import\s+["'])\.\/([^"']*?)(\.js)?(["'])/g, '$1./$2.js$4')
+      .replace(/(import\s+["'])\.\.\/([^"']*?)(\.js)?(["'])/g, '$1../$2.js$4');
     
     // Prevent adding .js to non-JS file extensions (like .json, etc.)
     updatedContent = updatedContent.replace(/\.js(\.json|\.css|\.svg)["']/g, '$1"');
