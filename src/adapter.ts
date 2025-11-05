@@ -1,4 +1,10 @@
-import type { EventEmitter, SendTransactionOptions, WalletName, TransactionOrVersionedTransaction } from '../base/src';
+import type { 
+    EventEmitter, 
+    SendTransactionOptions, 
+    WalletName, 
+    TransactionOrVersionedTransaction,
+    TransactionVersion 
+} from '@gorbag/wallet-adapter-base';
 import {
     BaseMessageSignerWalletAdapter,
     isIosAndRedirectable,
@@ -16,25 +22,15 @@ import {
     WalletSendTransactionError,
     WalletSignMessageError,
     WalletSignTransactionError,
-    type TransactionVersion,
-} from '../base/src';
-import type {
+} from '@gorbag/wallet-adapter-base';
+import {
     Connection,
     SendOptions,
     Transaction,
     TransactionSignature,
     VersionedTransaction,
+    PublicKey
 } from '@solana/web3.js';
-import { PublicKey } from '@solana/web3.js';
-import type {
-    Connection,
-    SendOptions,
-    Transaction,
-    TransactionSignature,
-    TransactionVersion,
-    VersionedTransaction,
-} from '@solana/web3.js';
-import { PublicKey } from '@solana/web3.js';
 
 interface GorbagWalletEvents {
     connect(...args: unknown[]): unknown;
@@ -72,9 +68,9 @@ export const GorbagWalletName = 'Gorbag' as WalletName<'Gorbag'>;
 
 export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
     name = GorbagWalletName;
-    url = 'https://github.com/DavidNzube101/gorbag-wallet';
-    icon = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PHJlY3Qgd2lkdGg9IjEwMCIgaGVpZ2h0PSIxMDAiIHJ4PSIyMCIgZmlsbD0iIzAwN2VhYSIvPjxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjIwIiBmaWxsPSIjZmZmIi8+PHBhdGggZD0iTTMwIDMwTDEwIDEwbDkwIDkwTjEwIDcwWiIgc3Ryb2tlPSIjZmZmIiBzdHJva2Utd2lkdGg9IjUiIGZpbGw9Im5vbmUiLz48L3N2Zz4='; // This is a placeholder SVG data URL
-    supportedTransactionVersions: ReadonlySet<TransactionVersion> = new Set(['legacy', 0]);
+    url = 'https://github.com/GorbagWallet/gorbag-wallet';
+    icon = 'https://gorbag.vercel.app/logos/icon.png'; // This is a placeholder SVG data URL
+    supportedTransactionVersions?: Set<'legacy' | 0> = new Set<'legacy' | 0>(['legacy', 0]);
 
     private _connecting: boolean;
     private _wallet: GorbagWallet | null;
@@ -130,7 +126,7 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
 
     async connect(): Promise<void> {
         try {
-            if (this.connected || this.connecting) return;
+            if (this.connecting) return;
 
             if (this.readyState === WalletReadyState.Loadable) {
                 // redirect to the Gorbag universal link (placeholder)
@@ -167,8 +163,19 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
                 throw new WalletPublicKeyError(error?.message, error);
             }
 
-            wallet.on('disconnect', this._disconnected);
-            wallet.on('accountChanged', this._accountChanged);
+            // Attach event listeners to the wallet
+            const connectHandler = this._handleConnect;
+            const disconnectHandler = this._handleDisconnect;
+            const accountChangedHandler = this._handleAccountChanged;
+            
+            // Store handlers for later removal
+            (wallet as any)._connectHandler = connectHandler;
+            (wallet as any)._disconnectHandler = disconnectHandler;
+            (wallet as any)._accountChangedHandler = accountChangedHandler;
+
+            wallet.on('connect', connectHandler);
+            wallet.on('disconnect', disconnectHandler);
+            wallet.on('accountChanged', accountChangedHandler);
 
             this._wallet = wallet;
             this._publicKey = publicKey;
@@ -185,8 +192,16 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
     async disconnect(): Promise<void> {
         const wallet = this._wallet;
         if (wallet) {
-            wallet.off('disconnect', this._disconnected);
-            wallet.off('accountChanged', this._accountChanged);
+            // Remove event listeners using stored handlers
+            if ((wallet as any)._connectHandler) {
+                wallet.off('connect', (wallet as any)._connectHandler);
+            }
+            if ((wallet as any)._disconnectHandler) {
+                wallet.off('disconnect', (wallet as any)._disconnectHandler);
+            }
+            if ((wallet as any)._accountChangedHandler) {
+                wallet.off('accountChanged', (wallet as any)._accountChangedHandler);
+            }
 
             this._wallet = null;
             this._publicKey = null;
@@ -283,26 +298,41 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         }
     }
 
-    private _disconnected = () => {
+    private _handleConnect = () => {
+        // Handle connect event from wallet
+        // Usually, we get the public key from the wallet after connect
         const wallet = this._wallet;
-        if (wallet) {
-            wallet.off('disconnect', this._disconnected);
-            wallet.off('accountChanged', this._accountChanged);
-
-            this._wallet = null;
-            this._publicKey = null;
-
-            this.emit('error', new WalletDisconnectedError());
-            this.emit('disconnect');
+        if (wallet && wallet.publicKey) {
+            try {
+                const newPublicKey = new PublicKey(wallet.publicKey.toBytes());
+                this._publicKey = newPublicKey;
+                this.emit('connect', newPublicKey);
+            } catch (error: any) {
+                this.emit('error', new WalletPublicKeyError(error?.message, error));
+            }
         }
     };
 
-    private _accountChanged = (newPublicKey: PublicKey) => {
+    private _handleDisconnect = () => {
+        this._wallet = null;
+        this._publicKey = null;
+        
+        this.emit('error', new WalletDisconnectedError());
+        this.emit('disconnect');
+    };
+
+    private _handleAccountChanged = (newPublicKey: PublicKey) => {
         const publicKey = this._publicKey;
         if (!publicKey) return;
 
         try {
-            newPublicKey = new PublicKey(newPublicKey.toBytes());
+            // newPublicKey should already be a PublicKey instance based on our interface definition
+            if (!(newPublicKey instanceof PublicKey)) {
+                // If it's coming as a different format from wallet, handle appropriately
+                // But based on our interface, it should be PublicKey
+                this.emit('error', new WalletPublicKeyError('Invalid public key format from wallet'));
+                return;
+            }
         } catch (error: any) {
             this.emit('error', new WalletPublicKeyError(error?.message, error));
             return;
@@ -311,6 +341,6 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         if (publicKey.equals(newPublicKey)) return;
 
         this._publicKey = newPublicKey;
-        this.emit('connect', newPublicKey);
+        this.emit('connect', newPublicKey); // Re-emit connect with new public key
     };
 }
