@@ -1,6 +1,6 @@
 {
     "name": "@gorbag/wallet-adapter",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "author": "David Nzube (Skipp)",
     "repository": {
         "type": "git",
@@ -37,16 +37,16 @@
         }
     },
     "scripts": {
-        "build": "npm run build:esm && npm run build:cjs",
-        "build:esm": "tsc --module es2020 --outDir lib/esm --target es2020",
-        "build:cjs": "tsc --module commonjs --outDir lib/cjs --target es2017",
+        "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run package",
+        "build:esm": "tsc -p tsconfig.esm.json",
+        "build:cjs": "tsc -p tsconfig.cjs.json",
         "clean": "shx mkdir -p lib && shx rm -rf lib",
         "lint": "prettier --check 'src/{*,**/*}.{ts,tsx,js,jsx,json}' && eslint",
         "package": "shx mkdir -p lib/cjs && shx echo '{ \"type\": \"commonjs\" }' > lib/cjs/package.json"
     },
     "dependencies": {
-        "@solana/web3.js": "^1.98.0",
-        "@gorbag/wallet-adapter-base": "^1.0.3"
+        "@gorbag/wallet-adapter-base": "^1.0.5",
+        "@solana/web3.js": "^1.98.0"
     },
     "devDependencies": {
         "shx": "^0.4.0",

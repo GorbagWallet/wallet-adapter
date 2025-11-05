@@ -1,12 +1,10 @@
 import type { 
-    EventEmitter, 
     SendTransactionOptions, 
     WalletName, 
     TransactionOrVersionedTransaction,
-    TransactionVersion 
+    WalletAdapterEvents
 } from '@gorbag/wallet-adapter-base';
 import {
-    BaseMessageSignerWalletAdapter,
     isIosAndRedirectable,
     isVersionedTransaction,
     scopePollingDetectionStrategy,
@@ -31,6 +29,7 @@ import {
     VersionedTransaction,
     PublicKey
 } from '@solana/web3.js';
+import { EventEmitter } from 'eventemitter3';
 
 interface GorbagWalletEvents {
     connect(...args: unknown[]): unknown;
@@ -66,10 +65,10 @@ export interface GorbagWalletAdapterConfig {}
 
 export const GorbagWalletName = 'Gorbag' as WalletName<'Gorbag'>;
 
-export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
+export class GorbagWalletAdapter {
     name = GorbagWalletName;
     url = 'https://github.com/GorbagWallet/gorbag-wallet';
-    icon = 'https://gorbag.vercel.app/logos/icon.png'; // This is a placeholder SVG data URL
+    icon = 'https://gorbag.vercel.app/logos/icon.png';
     supportedTransactionVersions?: Set<'legacy' | 0> = new Set<'legacy' | 0>(['legacy', 0]);
 
     private _connecting: boolean;
@@ -79,16 +78,15 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         typeof window === 'undefined' || typeof document === 'undefined'
             ? WalletReadyState.Unsupported
             : WalletReadyState.NotDetected;
+    private _emitter: EventEmitter<WalletAdapterEvents> = new EventEmitter<WalletAdapterEvents>();
 
     constructor(config: GorbagWalletAdapterConfig = {}) {
-        super();
         this._connecting = false;
         this._wallet = null;
         this._publicKey = null;
 
         if (this._readyState !== WalletReadyState.Unsupported) {
             if (isIosAndRedirectable()) {
-                // when in iOS (not webview), set Gorbag as loadable instead of checking for install
                 this._readyState = WalletReadyState.Loadable;
                 this.emit('readyStateChange', this._readyState);
             } else {
@@ -112,13 +110,30 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         return this._connecting;
     }
 
+    get connected() {
+        return !!this._publicKey;
+    }
+
     get readyState() {
         return this._readyState;
     }
 
+    on<E extends keyof WalletAdapterEvents>(event: E, listener: WalletAdapterEvents[E], context?: any): this {
+        this._emitter.on(event, listener, context);
+        return this;
+    }
+
+    emit<E extends keyof WalletAdapterEvents>(event: E, ...args: Parameters<WalletAdapterEvents[E]>): this {
+        this._emitter.emit(event, ...args);
+        return this;
+    }
+
+    removeListener<E extends keyof WalletAdapterEvents>(event: E, listener?: WalletAdapterEvents[E], context?: any): this {
+        this._emitter.removeListener(event, listener, context);
+        return this;
+    }
+
     async autoConnect(): Promise<void> {
-        // Skip autoconnect in the Loadable state
-        // We can't redirect to a universal link without user input
         if (this.readyState === WalletReadyState.Installed) {
             await this.connect();
         }
@@ -129,21 +144,13 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
             if (this.connecting) return;
 
             if (this.readyState === WalletReadyState.Loadable) {
-                // redirect to the Gorbag universal link (placeholder)
-                // this will open the current URL in the Gorbag in-wallet browser
-                const url = encodeURIComponent(window.location.href);
-                const ref = encodeURIComponent(window.location.origin);
-                // For now, just throw an error since Gorbag doesn't have a universal link
                 throw new WalletNotReadyError('Gorbag universal link not available');
-                // window.location.href = `gorbag://browse/${url}?ref=${ref}`;
-                // return;
             }
 
             if (this.readyState !== WalletReadyState.Installed) throw new WalletNotReadyError();
 
             this._connecting = true;
 
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             const wallet = window.gorbag?.solana || window.solana!;
 
             if (!wallet.isConnected) {
@@ -163,12 +170,10 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
                 throw new WalletPublicKeyError(error?.message, error);
             }
 
-            // Attach event listeners to the wallet
             const connectHandler = this._handleConnect;
             const disconnectHandler = this._handleDisconnect;
             const accountChangedHandler = this._handleAccountChanged;
             
-            // Store handlers for later removal
             (wallet as any)._connectHandler = connectHandler;
             (wallet as any)._disconnectHandler = disconnectHandler;
             (wallet as any)._accountChangedHandler = accountChangedHandler;
@@ -192,7 +197,6 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
     async disconnect(): Promise<void> {
         const wallet = this._wallet;
         if (wallet) {
-            // Remove event listeners using stored handlers
             if ((wallet as any)._connectHandler) {
                 wallet.off('connect', (wallet as any)._connectHandler);
             }
@@ -298,9 +302,28 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         }
     }
 
+    protected async prepareTransaction(
+        transaction: Transaction,
+        connection: Connection,
+        options: SendOptions = {}
+    ): Promise<Transaction> {
+        const publicKey = this.publicKey;
+        if (!publicKey) throw new Error('Wallet not connected');
+
+        transaction.feePayer = transaction.feePayer || publicKey;
+        transaction.recentBlockhash =
+            transaction.recentBlockhash ||
+            (
+                await connection.getLatestBlockhash({
+                    commitment: options.preflightCommitment,
+                    minContextSlot: options.minContextSlot,
+                })
+            ).blockhash;
+
+        return transaction;
+    }
+
     private _handleConnect = () => {
-        // Handle connect event from wallet
-        // Usually, we get the public key from the wallet after connect
         const wallet = this._wallet;
         if (wallet && wallet.publicKey) {
             try {
@@ -326,10 +349,7 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         if (!publicKey) return;
 
         try {
-            // newPublicKey should already be a PublicKey instance based on our interface definition
             if (!(newPublicKey instanceof PublicKey)) {
-                // If it's coming as a different format from wallet, handle appropriately
-                // But based on our interface, it should be PublicKey
                 this.emit('error', new WalletPublicKeyError('Invalid public key format from wallet'));
                 return;
             }
@@ -341,6 +361,6 @@ export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter {
         if (publicKey.equals(newPublicKey)) return;
 
         this._publicKey = newPublicKey;
-        this.emit('connect', newPublicKey); // Re-emit connect with new public key
+        this.emit('connect', newPublicKey);
     };
 }
