@@ -1,6 +1,6 @@
 {
     "name": "@gorbag/wallet-adapter",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "author": "David Nzube (Skipp)",
     "repository": {
         "type": "git",
@@ -45,7 +45,7 @@
         "package": "shx mkdir -p lib/cjs && shx echo '{ \"type\": \"commonjs\" }' > lib/cjs/package.json"
     },
     "dependencies": {
-        "@gorbag/wallet-adapter-base": "^1.0.5",
+        "@gorbag/wallet-adapter-base": "^1.0.7",
         "@solana/web3.js": "^1.98.0"
     },
     "devDependencies": {
