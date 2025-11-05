@@ -1,6 +1,6 @@
 {
     "name": "@gorbag/wallet-adapter",
-    "version": "1.0.9",
+    "version": "1.1.0",
     "author": "David Nzube (Skipp)",
     "repository": {
         "type": "git",
@@ -11,8 +11,8 @@
         "access": "public"
     },
     "files": [
-        "lib",
-        "src",
+        "lib/",
+        "src/",
         "LICENSE"
     ],
     "engines": {
@@ -37,9 +37,10 @@
         }
     },
     "scripts": {
-        "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run package",
+        "build": "npm run clean && npm run build:esm && npm run build:cjs && npm run postbuild  && npm run package",
         "build:esm": "tsc -p tsconfig.esm.json",
         "build:cjs": "tsc -p tsconfig.cjs.json",
+	"postbuild": "node add-js-extensions.js",
         "clean": "shx mkdir -p lib && shx rm -rf lib",
         "lint": "prettier --check 'src/{*,**/*}.{ts,tsx,js,jsx,json}' && eslint",
         "package": "shx mkdir -p lib/cjs && shx echo '{ \"type\": \"commonjs\" }' > lib/cjs/package.json"
