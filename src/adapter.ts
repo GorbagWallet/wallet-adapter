@@ -2,9 +2,11 @@ import type {
     SendTransactionOptions, 
     WalletName, 
     TransactionOrVersionedTransaction,
+    TransactionVersion,
     WalletAdapterEvents
 } from '@gorbag/wallet-adapter-base';
 import {
+    BaseMessageSignerWalletAdapter,
     isIosAndRedirectable,
     isVersionedTransaction,
     scopePollingDetectionStrategy,
@@ -29,7 +31,6 @@ import {
     VersionedTransaction,
     PublicKey
 } from '@solana/web3.js';
-import { EventEmitter } from 'eventemitter3';
 
 interface GorbagWalletEvents {
     connect(...args: unknown[]): unknown;
@@ -37,7 +38,12 @@ interface GorbagWalletEvents {
     accountChanged(newPublicKey: PublicKey): unknown;
 }
 
-interface GorbagWallet extends EventEmitter<GorbagWalletEvents> {
+interface EventEmitter {
+    on(event: string, handler: (...args: any[]) => void): void;
+    off(event: string, handler: (...args: any[]) => void): void;
+}
+
+interface GorbagWallet extends EventEmitter {
     isGorbag?: boolean;
     publicKey?: { toBytes(): Uint8Array };
     isConnected: boolean;
@@ -65,72 +71,75 @@ export interface GorbagWalletAdapterConfig {}
 
 export const GorbagWalletName = 'Gorbag' as WalletName<'Gorbag'>;
 
-export class GorbagWalletAdapter {
+export class GorbagWalletAdapter extends BaseMessageSignerWalletAdapter<'Gorbag'> {
+    // Declare emit method to fix TypeScript's type inference
+    declare emit: <E extends keyof WalletAdapterEvents>(
+        event: E,
+        ...args: Parameters<WalletAdapterEvents[E]>
+    ) => boolean;
+
     name = GorbagWalletName;
     url = 'https://github.com/GorbagWallet/gorbag-wallet';
     icon = 'https://gorbag.vercel.app/logos/icon.png';
-    supportedTransactionVersions?: Set<'legacy' | 0> = new Set<'legacy' | 0>(['legacy', 0]);
+    supportedTransactionVersions = new Set<'legacy' | 0>(['legacy', 0]) as Set<TransactionVersion>;
 
-    private _connecting: boolean;
-    private _wallet: GorbagWallet | null;
-    private _publicKey: PublicKey | null;
+    private _connecting: boolean = false;
+    private _wallet: GorbagWallet | null = null;
     private _readyState: WalletReadyState =
         typeof window === 'undefined' || typeof document === 'undefined'
             ? WalletReadyState.Unsupported
             : WalletReadyState.NotDetected;
-    private _emitter: EventEmitter<WalletAdapterEvents> = new EventEmitter<WalletAdapterEvents>();
 
     constructor(config: GorbagWalletAdapterConfig = {}) {
-        this._connecting = false;
-        this._wallet = null;
-        this._publicKey = null;
-
+        super();
+        
         if (this._readyState !== WalletReadyState.Unsupported) {
+            // Check immediately if wallet exists
+            setTimeout(() => {
+                this._checkWalletReady();
+            }, 0);
+            
             if (isIosAndRedirectable()) {
-                this._readyState = WalletReadyState.Loadable;
-                this.emit('readyStateChange', this._readyState);
+                this.setReadyState(WalletReadyState.Loadable);
             } else {
                 scopePollingDetectionStrategy(() => {
-                    if (window.gorbag?.solana?.isGorbag || window.solana?.isGorbag) {
-                        this._readyState = WalletReadyState.Installed;
-                        this.emit('readyStateChange', this._readyState);
-                        return true;
-                    }
-                    return false;
+                    return this._checkWalletReady();
                 });
             }
         }
     }
 
+    // Protected setter that handles emission - now with type-safe emit
+    protected setReadyState(state: WalletReadyState): void {
+        if (this._readyState === state) return;
+        
+        this._readyState = state;
+        this.emit('readyStateChange', state);
+    }
+    
+    private _checkWalletReady(): boolean {
+        const isAvailable = !!(window.gorbag?.solana?.isGorbag || window.solana?.isGorbag);
+        
+        if (isAvailable && this._readyState !== WalletReadyState.Installed) {
+            this.setReadyState(WalletReadyState.Installed);
+        } else if (!isAvailable && this._readyState !== WalletReadyState.NotDetected && this._readyState !== WalletReadyState.Unsupported) {
+            // Only set back to NotDetected if wallet is no longer available and not in Unsupported state
+            this.setReadyState(WalletReadyState.NotDetected);
+        }
+        
+        return isAvailable;
+    }
+
     get publicKey() {
-        return this._publicKey;
+        return super.publicKey;
     }
 
     get connecting() {
         return this._connecting;
     }
 
-    get connected() {
-        return !!this._publicKey;
-    }
-
     get readyState() {
         return this._readyState;
-    }
-
-    on<E extends keyof WalletAdapterEvents>(event: E, listener: WalletAdapterEvents[E], context?: any): this {
-        this._emitter.on(event, listener, context);
-        return this;
-    }
-
-    emit<E extends keyof WalletAdapterEvents>(event: E, ...args: Parameters<WalletAdapterEvents[E]>): this {
-        this._emitter.emit(event, ...args);
-        return this;
-    }
-
-    removeListener<E extends keyof WalletAdapterEvents>(event: E, listener?: WalletAdapterEvents[E], context?: any): this {
-        this._emitter.removeListener(event, listener, context);
-        return this;
     }
 
     async autoConnect(): Promise<void> {
@@ -170,9 +179,9 @@ export class GorbagWalletAdapter {
                 throw new WalletPublicKeyError(error?.message, error);
             }
 
-            const connectHandler = this._handleConnect;
-            const disconnectHandler = this._handleDisconnect;
-            const accountChangedHandler = this._handleAccountChanged;
+            const connectHandler = this._handleConnect.bind(this);
+            const disconnectHandler = this._handleDisconnect.bind(this);
+            const accountChangedHandler = this._handleAccountChanged.bind(this);
             
             (wallet as any)._connectHandler = connectHandler;
             (wallet as any)._disconnectHandler = disconnectHandler;
@@ -183,7 +192,12 @@ export class GorbagWalletAdapter {
             wallet.on('accountChanged', accountChangedHandler);
 
             this._wallet = wallet;
-            this._publicKey = publicKey;
+            // Set the public key using the setter from the base class
+            Object.defineProperty(this, '_publicKey', {
+                value: publicKey,
+                writable: true,
+                configurable: true
+            });
 
             this.emit('connect', publicKey);
         } catch (error: any) {
@@ -208,7 +222,12 @@ export class GorbagWalletAdapter {
             }
 
             this._wallet = null;
-            this._publicKey = null;
+            // Reset the public key
+            Object.defineProperty(this, '_publicKey', {
+                value: null,
+                writable: true,
+                configurable: true
+            });
 
             try {
                 await wallet.disconnect();
@@ -218,39 +237,6 @@ export class GorbagWalletAdapter {
         }
 
         this.emit('disconnect');
-    }
-
-    async sendTransaction<T extends TransactionOrVersionedTransaction<this['supportedTransactionVersions']>>(
-        transaction: T,
-        connection: Connection,
-        options: SendTransactionOptions = {}
-    ): Promise<TransactionSignature> {
-        try {
-            const wallet = this._wallet;
-            if (!wallet) throw new WalletNotConnectedError();
-
-            try {
-                const { signers, ...sendOptions } = options;
-
-                if (isVersionedTransaction(transaction)) {
-                    signers?.length && transaction.sign(signers);
-                } else {
-                    transaction = (await this.prepareTransaction(transaction, connection, sendOptions)) as T;
-                    signers?.length && (transaction as Transaction).partialSign(...signers);
-                }
-
-                sendOptions.preflightCommitment = sendOptions.preflightCommitment || connection.commitment;
-
-                const { signature } = await wallet.signAndSendTransaction(transaction, sendOptions);
-                return signature;
-            } catch (error: any) {
-                if (error instanceof WalletError) throw error;
-                throw new WalletSendTransactionError(error?.message, error);
-            }
-        } catch (error: any) {
-            this.emit('error', error);
-            throw error;
-        }
     }
 
     async signTransaction<T extends Transaction | VersionedTransaction>(transaction: T): Promise<T> {
@@ -302,33 +288,18 @@ export class GorbagWalletAdapter {
         }
     }
 
-    protected async prepareTransaction(
-        transaction: Transaction,
-        connection: Connection,
-        options: SendOptions = {}
-    ): Promise<Transaction> {
-        const publicKey = this.publicKey;
-        if (!publicKey) throw new Error('Wallet not connected');
-
-        transaction.feePayer = transaction.feePayer || publicKey;
-        transaction.recentBlockhash =
-            transaction.recentBlockhash ||
-            (
-                await connection.getLatestBlockhash({
-                    commitment: options.preflightCommitment,
-                    minContextSlot: options.minContextSlot,
-                })
-            ).blockhash;
-
-        return transaction;
-    }
-
     private _handleConnect = () => {
         const wallet = this._wallet;
         if (wallet && wallet.publicKey) {
             try {
                 const newPublicKey = new PublicKey(wallet.publicKey.toBytes());
-                this._publicKey = newPublicKey;
+                // Update the public key
+                Object.defineProperty(this, '_publicKey', {
+                    value: newPublicKey,
+                    writable: true,
+                    configurable: true
+                });
+                
                 this.emit('connect', newPublicKey);
             } catch (error: any) {
                 this.emit('error', new WalletPublicKeyError(error?.message, error));
@@ -338,14 +309,19 @@ export class GorbagWalletAdapter {
 
     private _handleDisconnect = () => {
         this._wallet = null;
-        this._publicKey = null;
+        // Reset the public key
+        Object.defineProperty(this, '_publicKey', {
+            value: null,
+            writable: true,
+            configurable: true
+        });
         
         this.emit('error', new WalletDisconnectedError());
         this.emit('disconnect');
     };
 
     private _handleAccountChanged = (newPublicKey: PublicKey) => {
-        const publicKey = this._publicKey;
+        const publicKey = this.publicKey; // Use getter from base class
         if (!publicKey) return;
 
         try {
@@ -360,7 +336,13 @@ export class GorbagWalletAdapter {
 
         if (publicKey.equals(newPublicKey)) return;
 
-        this._publicKey = newPublicKey;
+        // Update the public key
+        Object.defineProperty(this, '_publicKey', {
+            value: newPublicKey,
+            writable: true,
+            configurable: true
+        });
+        
         this.emit('connect', newPublicKey);
     };
 }
